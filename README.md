@@ -126,7 +126,7 @@
 
 - **삼변측량 (Trilateration 알고리즘)**  
 UWB 태그와 앵커 사이의 거리 정보를 이용하여 차량의 2차원 좌표(x, y)를 계산하는 핵심 알고리즘입니다.  
-3개의 앵커 좌표(`a[3]`)와 각각의 거리값(`r[3]`)을 입력받아, 선형방정식을 풀어 차량의 위치를 산출합니다.  
+4개의 앵커 좌표(`a[3]`)와 각각의 거리값(`r[3]`)을 입력받아, 선형방정식을 풀어 차량의 위치를 산출합니다.  
 det(행렬식)이 0에 가까우면 해가 존재하지 않으므로 예외 처리를 수행합니다. 
   
 
@@ -227,7 +227,36 @@ det(행렬식)이 0에 가까우면 해가 존재하지 않으므로 예외 처�
     double raw_x = x, raw_y = y;
 
 ```
-
+- **NLOS/LOS 필터링 알고리즘**
+  DWM1000 내부 레지스터에 저장된 신호 품질 데이터를 활용하여 NLOS/LOS 를 검출하는 알고리즘입니다.
+```ino
+// 적응형 가중치 계산
+double calculateAdaptiveWeight(const UWBData& data, double estimated_distance) {
+    if (!data.valid) return 0.0;
+    
+    float powerDiff = fabs(data.rxPower - data.fpPower);
+    double powerWeight = exp(-powerDiff / POWER_DIFF_THRESHOLD);
+    double qualityWeight = data.rxQuality;
+    
+    double distanceWeight = 1.0;
+    if (estimated_distance > 0) {
+        distanceWeight = 1.0 / (1.0 + pow(estimated_distance / 100.0, DISTANCE_WEIGHT_FACTOR));
+    }
+    
+    double freshnessWeight = 1.0;
+    unsigned long age = millis() - data.timestamp;
+    if (age > 1000) {
+        freshnessWeight = 0.5;
+    }
+    
+    double weight = powerWeight * qualityWeight * distanceWeight * freshnessWeight;
+    
+    if (weight < 0.01) weight = 0.01;
+    
+    return weight;
+}
+```
+  
 - **BFS 기반 주차공간 배정 알고리즘**  
 BFS 기반 탐색 로직을 활용해 차량의 유형(장애인/전기차/일반차)과 목적지(입구 위치)를 고려하여
 가장 가까운 주차 공간을 자동으로 배정하는 알고리즘입니다.
