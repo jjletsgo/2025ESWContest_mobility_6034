@@ -131,28 +131,101 @@ det(행렬식)이 0에 가까우면 해가 존재하지 않으므로 예외 처�
   
 
 ```C
-static bool trilat2D(const Vec3 a[3], const float r[3], float &x, float &y) {
-    // 앵커 간 좌표 차이를 기반으로 행렬 A 구성
-    float A11 = 2.0f*(a[1].x - a[0].x), A12 = 2.0f*(a[1].y - a[0].y);
-    float A21 = 2.0f*(a[2].x - a[0].x), A22 = 2.0f*(a[2].y - a[0].y);
+ if (lastPosition.valid && (millis() - lastPosition.timestamp < 1000)) {
+        x = lastPosition.x;
+        y = lastPosition.y;
+    } else {
+        x = 100.0;  // 태그 영역 중앙
+        y = 100.0;
+    }
+    
+    converged = false;
+    
+    // Gauss-Newton iterations
+    for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
+        iterations_used = iter + 1;
+        
+        double J[4][2];
+        double r[4];
+        double JTW[2][4];
+        double JTWJ[2][2];
+        double JTWr[2];
+        
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 2; j++) {
+                JTWJ[i][j] = 0.0;
+            }
+            JTWr[i] = 0.0;
+        }
+        
+        for (int i = 0; i < validCount; i++) {
+            int idx = validIndices[i];
+            double dx = x - anchors[idx].x;
+            double dy = y - anchors[idx].y;
+            double estimated_dist = sqrt(dx * dx + dy * dy);
+            
+            weights[idx] = calculateAdaptiveWeight(uwbData[idx], estimated_dist);
+        }
+        
+        for (int i = 0; i < validCount; i++) {
+            int idx = validIndices[i];
+            double dx = x - anchors[idx].x;
+            double dy = y - anchors[idx].y;
+            double dist = sqrt(dx * dx + dy * dy);
+            
+            if (dist < 0.001) dist = 0.001;
+            
+            J[i][0] = dx / dist;
+            J[i][1] = dy / dist;
+            
+            r[i] = r2d[idx] - dist;
+        }
+        
+        for (int i = 0; i < validCount; i++) {
+            int idx = validIndices[i];
+            double w = weights[idx];
+            
+            JTW[0][i] = J[i][0] * w;
+            JTW[1][i] = J[i][1] * w;
+            
+            for (int j = 0; j < 2; j++) {
+                for (int k = 0; k < 2; k++) {
+                    JTWJ[j][k] += JTW[j][i] * J[i][k];
+                }
+                JTWr[j] += JTW[j][i] * r[i];
+            }
+        }
+        
+        double det = JTWJ[0][0] * JTWJ[1][1] - JTWJ[0][1] * JTWJ[1][0];
+        
+        if (fabs(det) < 0.0001) {
+            Serial2.println("Warning: Singular matrix in Gauss-Newton");
+            return false;
+        }
+        
+        double delta_x = (JTWJ[1][1] * JTWr[0] - JTWJ[0][1] * JTWr[1]) / det;
+        double delta_y = (JTWJ[0][0] * JTWr[1] - JTWJ[1][0] * JTWr[0]) / det;
+        
+        double step_size = sqrt(delta_x * delta_x + delta_y * delta_y);
+        const double MAX_STEP = 50.0;
+        if (step_size > MAX_STEP) {
+            double scale = MAX_STEP / step_size;
+            delta_x *= scale;
+            delta_y *= scale;
+        }
+        
+        x += delta_x;
+        y += delta_y;
+        
+        double update_norm = sqrt(delta_x * delta_x + delta_y * delta_y);
+        if (update_norm < CONVERGENCE_THRESHOLD) {
+            converged = true;
+            break;
+        }
+    }
+    
+    double raw_x = x, raw_y = y;
 
-    // 각 앵커와 태그 사이의 거리 제곱과 좌표를 이용한 b 벡터 계산
-    float b1  = (r[0]*r[0] - r[1]*r[1])
-              + (a[1].x*a[1].x - a[0].x*a[0].x)
-              + (a[1].y*a[1].y - a[0].y*a[0].y);
-    float b2  = (r[0]*r[0] - r[2]*r[2])
-              + (a[2].x*a[2].x - a[0].x*a[0].x)
-              + (a[2].y*a[2].y - a[0].y*a[0].y);
-
-    // 행렬식(det)이 0에 가까우면 연립방정식을 풀 수 없음
-    float det = A11*A22 - A12*A21;
-    if (fabsf(det) < 1e-6f) return false;
-
-    // Cramer’s rule을 통해 (x, y) 좌표 계산
-    x = ( b1*A22 - A12*b2) / det;
-    y = (-b1*A21 + A11*b2) / det;
-    return true;
-}
 ```
 
 - **BFS 기반 주차공간 배정 알고리즘**  
